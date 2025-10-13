@@ -2,7 +2,8 @@
 requires = [
   "meson-python>=0.15",
   "meson>=1.2",
-  "ninja>=1.11"
+  "ninja>=1.11",
+  "setuptools-scm>=7"
 ]
 build-backend = "mesonpy"
 
@@ -34,3 +35,9 @@ dev = [
   "ruff>=0.1.9",
   "build>=1.0"
 ]
+
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+local_scheme = "node-and-date"
+version_scheme = "no-guess-dev"

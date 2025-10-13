@@ -141,6 +141,14 @@ with `PieceReader`, including progress reporting and parallel execution recipes.
 
 ---
 
+## 🔖 Versioning
+
+- Versions come from annotated Git tags such as `v0.2.0`; `setuptools-scm` reads them for builds.
+- Use `make release TAG=v0.2.0` to sync metadata, commit, tag, and build the release artifact.
+- Run `python scripts/get_version.py` to see the version that will be embedded into packages.
+- For manual workflows, run `python scripts/sync_version.py` to write the tag into `pyproject.toml` and `meson.build`.
+- The package exposes `parcake.__version__`, which resolves to the installed build number (falls back to `0.0.0` in editable installs).
+
 ## 📜 License
 
 This project is licensed under the **MIT License** — see the [`LICENSE`](LICENSE)
