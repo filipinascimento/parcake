@@ -1,0 +1,36 @@
+[build-system]
+requires = [
+  "meson-python>=0.15",
+  "meson>=1.2",
+  "ninja>=1.11"
+]
+build-backend = "mesonpy"
+
+[project]
+name = "parcake"
+version = "0.1.0"
+description = "Makes Parquet workflows a piece of cake to slice, save, and serve."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Parcake Developers"}]
+keywords = ["parquet", "pyarrow", "pandas", "chunked io", "piece" , "parcake"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = [
+  "pandas>=1.5",
+  "pyarrow>=10.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "mypy>=1.5",
+  "ruff>=0.1.9",
+  "build>=1.0"
+]
