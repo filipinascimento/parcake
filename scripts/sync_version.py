@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
@@ -13,6 +15,19 @@ MESON_BUILD = ROOT / "meson.build"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from get_version import detect_version, FALLBACK_VERSION  # noqa: E402
+
+
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__ or "")
+    parser.add_argument(
+        "--version",
+        help="Override the detected version (leading 'v' is stripped automatically).",
+    )
+    return parser.parse_args(argv)
+
+
+def _normalise(version: str) -> str:
+    return version[1:] if version.startswith("v") else version
 
 
 def _replace_once(path: Path, pattern: str, repl: str) -> None:
@@ -24,14 +39,18 @@ def _replace_once(path: Path, pattern: str, repl: str) -> None:
     path.write_text(updated)
 
 
-def main() -> int:
-    version = detect_version()
-    if version == FALLBACK_VERSION:
-        print(
-            "[sync_version] Warning: using fallback version. Ensure the repository has tags "
-            "or install setuptools-scm",
-            file=sys.stderr,
-        )
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _parse_args(argv)
+
+    if args.version:
+        version = _normalise(args.version)
+    else:
+        version = detect_version()
+        if version == FALLBACK_VERSION:
+            print(
+                "[sync_version] Warning: using fallback version. Provide --version or create tags.",
+                file=sys.stderr,
+            )
 
     _replace_once(
         PYPROJECT,
