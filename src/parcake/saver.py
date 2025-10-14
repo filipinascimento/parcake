@@ -73,6 +73,9 @@ class PieceSaver:
         created automatically.
     :param max_piece_size: Maximum number of buffered rows before the saver
         flushes to disk.
+    :param compression_level: Optional compression level forwarded to
+        :class:`pyarrow.parquet.ParquetWriter`. When ``None`` the writer uses its
+        default behaviour.
     :raises ValueError: If *header_types* is empty or *max_piece_size* is not a
         positive integer.
     """
@@ -83,6 +86,7 @@ class PieceSaver:
         output_path: PathLike,
         *,
         max_piece_size: int = 1_000_000,
+        compression_level: Optional[int] = None,
     ) -> None:
         if not header_types:
             raise ValueError("header_types must define at least one column")
@@ -101,6 +105,7 @@ class PieceSaver:
         self._output_path = Path(output_path)
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
         self._max_piece_size = max_piece_size
+        self._compression_level = compression_level
         self._current_piece: Dict[str, list[Any]] = {col: [] for col in self._columns}
         self._writer: Optional[pq.ParquetWriter] = None
         self._rows_written = 0
@@ -173,7 +178,10 @@ class PieceSaver:
         table = pa.Table.from_pandas(df, schema=self._schema, preserve_index=False)
 
         if self._writer is None:
-            self._writer = pq.ParquetWriter(self._output_path, self._schema)
+            writer_kwargs: Dict[str, Any] = {}
+            if self._compression_level is not None:
+                writer_kwargs["compression_level"] = self._compression_level
+            self._writer = pq.ParquetWriter(self._output_path, self._schema, **writer_kwargs)
         self._writer.write_table(table)
         self._rows_written += len(df)
         self._current_piece = {col: [] for col in self._columns}
@@ -208,14 +216,22 @@ class PieceSaver:
         output_path: PathLike,
         *,
         max_piece_size: int = 1_000_000,
+        compression_level: Optional[int] = None,
     ) -> "PieceSaver":
         """Construct a saver directly from a PyArrow schema.
 
         :param schema: Schema used to derive column names and types.
         :param output_path: Destination Parquet file path.
         :param max_piece_size: Maximum number of buffered rows before writing.
+        :param compression_level: Optional compression level forwarded to the
+            saver constructor.
         :returns: A new :class:`PieceSaver` configured from *schema*.
         """
 
         header_types = {field.name: field.type for field in schema}
-        return cls(header_types, output_path, max_piece_size=max_piece_size)
+        return cls(
+            header_types,
+            output_path,
+            max_piece_size=max_piece_size,
+            compression_level=compression_level,
+        )

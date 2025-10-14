@@ -82,3 +82,59 @@ def test_piece_saver_discard_piece(tmp_path: Path) -> None:
 def test_piece_saver_requires_positive_piece_size(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         PieceSaver({"id": "int"}, tmp_path / "bad.parquet", max_piece_size=0)
+
+
+
+def test_piece_saver_forwards_compression_level(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class StubWriter:
+        def __init__(self, *_args, **kwargs):
+            captured["kwargs"] = kwargs
+
+        def write_table(self, table):
+            captured["rows"] = table.num_rows
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(pq, "ParquetWriter", StubWriter)
+
+    saver = PieceSaver(
+        {"value": "float64"},
+        tmp_path / "level.parquet",
+        max_piece_size=1,
+        compression_level=5,
+    )
+
+    saver.add(value=1.0)
+    saver.close()
+
+    assert captured["kwargs"].get("compression_level") == 5
+    assert captured.get("rows") == 1
+    assert captured.get("closed") is True
+
+
+
+def test_piece_saver_omits_compression_level_when_none(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class StubWriter:
+        def __init__(self, *_args, **kwargs):
+            captured["kwargs"] = kwargs
+
+        def write_table(self, table):
+            captured["rows"] = table.num_rows
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(pq, "ParquetWriter", StubWriter)
+
+    saver = PieceSaver({"value": "float64"}, tmp_path / "default.parquet", max_piece_size=1)
+    saver.add(value=2.0)
+    saver.close()
+
+    assert "compression_level" not in captured["kwargs"]
+    assert captured.get("rows") == 1
+    assert captured.get("closed") is True

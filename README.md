@@ -67,7 +67,9 @@ with PieceSaver(header, output, max_piece_size=10_000) as saver:
 `PieceSaver` buffers rows until `max_piece_size` is reached, then flushes a new
 row group to disk automatically. You can call `add_many()` with an iterable of
 rows, construct an instance `from_schema()`, or inspect `rows_written` and the
-current `buffer_size` for monitoring.
+current `buffer_size` for monitoring. Need a specific compression level? Pass
+`compression_level` when constructing the saver; `None` preserves the Parquet
+writer default.
 
 ---
 
