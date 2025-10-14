@@ -14,7 +14,7 @@ description = "Makes Parquet workflows a piece of cake to slice, save, and serve
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-authors = [{name = "Parcake Developers"}]
+authors = [{name = "Filipi Nascimento Silva", email = "filipinascimento@gmail.com"}]
 keywords = ["parquet", "pyarrow", "pandas", "chunked io", "piece" , "parcake"]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -27,6 +27,7 @@ dependencies = [
   "pandas>=1.5",
   "pyarrow>=10.0"
 ]
+urls = { "Homepage" = "https://github.com/filipinascimento/parcake" }
 
 [project.optional-dependencies]
 dev = [
@@ -35,7 +36,6 @@ dev = [
   "ruff>=0.1.9",
   "build>=1.0"
 ]
-
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
