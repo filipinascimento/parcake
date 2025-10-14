@@ -1,3 +1,6 @@
+
+# Example of reading and processing Parquet files in pieces using PieceReader
+
 from multiprocessing.pool import ThreadPool
 
 import pandas as pd
@@ -9,8 +12,7 @@ from tqdm.auto import tqdm
 
 
 if __name__ == "__main__":
-    paths = ["test_0.parquet", "test_1.parquet"]
-
+    paths = ["events_0.parquet", "events_1.parquet"]
 
     # Example usage:
 
@@ -49,7 +51,7 @@ if __name__ == "__main__":
     from multiprocessing import Pool 
     def get_first_id(df):
         # do work...
-        return df['id'].iloc[0]
+        return df['event_id'].iloc[0]
 
     all_first_ids = []
     with Pool(32) as pool:

@@ -19,9 +19,12 @@ writing of Parquet files with a focus on **efficiency** and **ease of use**:
 - 🔁 **Row-group iteration** that yields pandas DataFrames with `PieceReader`
 - ⚙️ **Parallel row-group processing** with `PieceReader.process`
 - 💾 **Memory-aware operations** that avoid loading entire datasets at once
+- 🔽 **DuckDB-powered sorting** for large datasets with `PieceSorter`
 
 These utilities make it easier to work with large Parquet datasets—ideal for
 data pipelines, preprocessing, or scalable ETL jobs.
+
+Full documentation lives in the new `docs/` directory, ready for Sphinx builds.
 
 ---
 
@@ -93,6 +96,18 @@ for frame, path, rg in PieceReader(["events_a.parquet", "events_b.parquet"]).ite
 
 ---
 
+### PieceSorter — reorder Parquet files efficiently
+
+```python
+from parcake import PieceSorter
+
+sources = ['events_a.parquet', 'events_b.parquet']
+sorter = PieceSorter(sources, columns=['timestamp'])
+sorter.sort('./events_sorted.parquet', compression='preserve', threads=4)
+```
+
+Provide per-column directions with tuples, for example `('timestamp', True)` for ascending or `('value', False)` for descending. Pass directories or glob patterns to combine many files.
+
 ### Parallel processing with PieceReader.process
 
 ```python
@@ -118,7 +133,7 @@ to stream results as soon as they are ready.
 
 ## 🧪 Examples
 
-See `scripts/save_example.py` and `scripts/load_example.py` for end-to-end
+See the Sphinx-style docs in `docs/`—notably `docs/examples/save_example.py`, `docs/examples/load_example.py`, and `docs/examples/sort_example.py` for end-to-end
 examples that create Parquet files with `PieceSaver` and iterate through them
 with `PieceReader`, including progress reporting and parallel execution recipes.
 

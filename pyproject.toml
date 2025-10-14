@@ -30,6 +30,9 @@ dependencies = [
 urls = { "Homepage" = "https://github.com/filipinascimento/parcake" }
 
 [project.optional-dependencies]
+duckdb = [
+  "duckdb>=0.9"
+]
 dev = [
   "pytest>=7.0",
   "mypy>=1.5",

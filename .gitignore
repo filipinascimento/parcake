@@ -131,3 +131,5 @@ Temporary Items
 .apdisk
 *.pkl
 **/Samples
+/.duckdb-temp
+
