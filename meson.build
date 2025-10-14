@@ -12,7 +12,6 @@ package_sources = files(
   'src/parcake/__init__.py',
   'src/parcake/saver.py',
   'src/parcake/reader.py',
-  'src/parcake/sorting.py',
   'src/parcake/py.typed',
 )
 
