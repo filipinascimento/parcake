@@ -150,18 +150,15 @@ def _normalise_memory_limit(memory_limit: Optional[Union[int, str]]) -> Optional
 
 @dataclass
 class PieceSorter:
-    """Sort one or many Parquet files using DuckDB.
+    """Sort Parquet datasets using DuckDB and external spill management.
 
-    Parameters
-    ----------
-    source:
-        Path, directory, glob pattern, or iterable combining multiple inputs.
-        Directories expand to ``*.parquet`` patterns automatically.
-    columns:
-        Sequence of column names or ``(column, ascending)`` tuples. The global
-        ``ascending`` flag applies to bare column names.
-    ascending:
-        Default sort direction for bare column names (``True`` for ascending).
+    :param source: Single path, directory, glob pattern, or iterable of paths.
+        Directories expand to ``*.parquet`` automatically and glob patterns are
+        resolved against the current working directory.
+    :param columns: Column names or ``(name, ascending)`` tuples describing the
+        sort order. Bare column names share the default direction from the ``ascending`` attribute.
+    :param ascending: Default sort direction for column names supplied without
+        an explicit ``(name, ascending)`` tuple.
     """
 
     source: Union[PathLike, Iterable[PathLike]]
@@ -178,7 +175,28 @@ class PieceSorter:
         memory_limit: Optional[Union[int, str]] = None,
         progress_bar: bool = False,
     ) -> Path:
-        """Sort input Parquet data and persist the ordered output."""
+        """Sort input Parquet data and persist the ordered output.
+
+        :param destination: Output file path. Parent directories are created on
+            demand.
+        :param compression: ``"preserve"`` (default) inherits the codec from the
+            first source row group. Pass an explicit DuckDB compression value,
+            or ``"none"``/``"uncompressed"`` to emit raw Parquet data.
+        :param temp_directory: Optional directory DuckDB can use for on-disk
+            spill files. Created automatically when missing.
+        :param threads: Override DuckDB's ``PRAGMA threads`` value. Must be a
+            positive integer.
+        :param memory_limit: DuckDB ``PRAGMA memory_limit`` value. Accepts byte
+            counts (``int``) or DuckDB-compatible size strings such as
+            ``"8GB"``.
+        :param progress_bar: When ``True`` enables DuckDB's COPY progress bar.
+        :returns: Path to the sorted destination Parquet file.
+        :raises ModuleNotFoundError: If :mod:`duckdb` is not installed.
+        :raises ValueError: If no sources are provided, the column list is
+            empty, or invalid thread/memory constraints are specified.
+        :raises FileNotFoundError: When any source path or glob fails to
+            resolve.
+        """
 
         if duckdb is None:  # pragma: no cover - depends on environment
             raise ModuleNotFoundError(

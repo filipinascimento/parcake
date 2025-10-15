@@ -1,4 +1,4 @@
-.PHONY: release sync-version commit tag wheel check-clean build
+.PHONY: release sync-version commit tag wheel check-clean build docs docs-serve
 
 PYTHON ?= python
 TAG ?=
@@ -28,3 +28,10 @@ wheel:
 	$(PYTHON) -m build
 
 build: wheel
+
+
+docs:
+	$(PYTHON) -m mkdocs build
+
+docs-serve:
+	$(PYTHON) -m mkdocs serve

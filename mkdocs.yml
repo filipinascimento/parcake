@@ -1,0 +1,53 @@
+site_name: Parcake
+site_url: https://filipinascimento.github.io/parcake/
+repo_name: filipinascimento/parcake
+repo_url: https://github.com/filipinascimento/parcake
+edit_uri: ""
+theme:
+  name: material
+  logo: assets/parcake.png
+  favicon: assets/parcake.png
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: orange
+nav:
+  - Home: index.md
+  - Examples: examples.md
+  - API Reference: reference.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            docstring_style: sphinx
+            docstring_section_style: list
+            merge_init_into_class: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: false
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - docs
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+watch:
+  - docs/examples

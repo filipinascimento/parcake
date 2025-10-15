@@ -79,18 +79,19 @@ def _call_processor(func: Callable, df: pd.DataFrame, rg: int, path: Path):
 
 
 class PieceReader:
-    """
-    Iterate over Parquet row groups across one or many files, and process them in parallel.
+    """Iterate over Parquet row groups and optionally process them in parallel.
 
     Example
     -------
-    reader = PieceReader(Path("data").glob("*.parquet"))
-    for df in reader:  # sequential
-        ...
+    .. code-block:: python
 
-    def process_fn(df, path: Path, rg: int): ...
-    for out in reader.process(process_fn, ncpu=-1, keep_order=True):
-        ...
+       reader = PieceReader(Path("data").glob("*.parquet"))
+       for df in reader:  # sequential
+           ...
+
+       def process_fn(df, path: Path, rg: int): ...
+       for out in reader.process(process_fn, ncpu=-1, keep_order=True):
+           ...
     """
 
     def __init__(
@@ -103,15 +104,24 @@ class PieceReader:
         keep_input_order: bool = True,
         shuffle: bool = False,
     ) -> None:
-        """
-        Parameters
-        ----------
-        source : path | list/iterable of paths | Path.glob iterator
-        row_groups : optional sequence of RG indices to visit per file (default: all)
-        columns : optional subset of columns
-        to_pandas_kwargs : passed to Table.to_pandas
-        keep_input_order : preserve provided file order when building tasks
-        shuffle : if True, randomly shuffle the (file, rg) tasks (useful for unordered pools)
+        """Configure row-group iteration across one or many Parquet files.
+
+        :param source: Path, iterable of paths, or ``Path.glob`` iterator that
+            resolves to Parquet files. Missing paths raise
+            :class:`FileNotFoundError`.
+        :param row_groups: Optional sequence of row-group indices to visit per
+            file. When ``None`` every row group is yielded.
+        :param columns: Optional subset of column names to project when reading
+            Parquet data.
+        :param to_pandas_kwargs: Keyword arguments forwarded to
+            :meth:`pyarrow.Table.to_pandas`.
+        :param keep_input_order: When ``False`` the provided sources are sorted
+            lexicographically before building tasks.
+        :param shuffle: Shuffle the computed ``(path, row_group)`` tasks. Useful
+            when distributing work across unordered pools.
+        :raises FileNotFoundError: If any source path does not exist.
+        :raises IndexError: When an explicit row-group index falls outside the
+            available range for a file.
         """
         self._sources = _normalize_sources(source)
         if not keep_input_order:
@@ -149,14 +159,20 @@ class PieceReader:
 
     @property
     def sources(self) -> Tuple[Path, ...]:
+        """Tuple of resolved Parquet source paths in task order."""
+
         return tuple(self._sources)
 
     @property
     def columns(self) -> Optional[Tuple[str, ...]]:
+        """Subset of column names projected when reading row groups."""
+
         return self._columns if self._columns is not None else None
 
     @property
     def to_pandas_kwargs(self) -> Mapping[str, Any]:
+        """Keyword arguments forwarded to :meth:`pyarrow.Table.to_pandas`."""
+
         return dict(self._to_pandas_kwargs)
 
     def tasks(self) -> Tuple[Tuple[str, int], ...]:
@@ -194,25 +210,27 @@ class PieceReader:
         unordered: bool = True,
         chunksize: int = 1,
     ) -> Iterable[Any]:
-        """
-        Process all (file, row-group) in parallel.
+        """Process all (file, row-group) tasks with optional parallelism.
 
-        Parameters
-        ----------
-        func : callable
-            Accepts one of: (df), (df, path), (df, rg), (df, rg, path) / (df, path, rg).
-        pool : multiprocessing.Pool (has imap/imap_unordered). If provided, used as-is.
-        executor : concurrent.futures.Executor. If provided, used as-is.
-        ncpu / cores : if provided and no pool/executor is passed, create a temporary one.
-                       Use -1 to use all available CPUs.
-        executor_kind : "process" (default) or "thread" when creating a temporary executor.
-        keep_order : if True, yield results in (file order × row-group order) even in parallel.
-        unordered : when order is not requested and supported, stream results as soon as ready.
-        chunksize : forwarded to Pool.imap(_unordered), if applicable.
-
-        Returns
-        -------
-        Iterable of results from func.
+        :param func: Callable executed for each DataFrame. It may accept ``df``
+            only, ``(df, path)``, ``(df, rg)`` or ``(df, rg, path)`` in any order.
+        :param pool: Existing :class:`multiprocessing.Pool` supporting ``imap``.
+            Used directly when supplied.
+        :param executor: Existing :class:`concurrent.futures.Executor`. Used as
+            the execution backend when provided.
+        :param ncpu: Worker count for a temporary executor when neither ``pool``
+            nor ``executor`` is supplied. ``-1`` uses all available CPUs.
+        :param cores: Alias for ``ncpu`` kept for backwards compatibility.
+        :param executor_kind: ``"process"`` (default) creates a
+            :class:`~concurrent.futures.ProcessPoolExecutor`; ``"thread"``
+            creates a :class:`~concurrent.futures.ThreadPoolExecutor`.
+        :param keep_order: When ``True`` results are yielded in deterministic
+            task order even when executing in parallel.
+        :param unordered: When ``True`` and order is not requested, results are
+            streamed as soon as they complete.
+        :param chunksize: Forwarded to ``Pool.imap``/``imap_unordered`` when a
+            multiprocessing pool is used.
+        :returns: Iterable of results produced by *func*.
         """
         # 1) If a pool with imap is given, use it (fast path for multiprocessing.Pool).
         if pool is not None and hasattr(pool, "imap"):

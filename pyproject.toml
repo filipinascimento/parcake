@@ -37,7 +37,17 @@ dev = [
   "pytest>=7.0",
   "mypy>=1.5",
   "ruff>=0.1.9",
-  "build>=1.0"
+  "build>=1.0",
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
+  "pymdown-extensions>=10.0"
+]
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
+  "pymdown-extensions>=10.0"
 ]
 
 [tool.setuptools_scm]
