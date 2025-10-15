@@ -6,6 +6,7 @@ import contextlib
 import itertools
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -22,25 +23,9 @@ from typing import (
 )
 
 import pandas as pd
-import pyarrow as pa
 
-try:  # pragma: no cover - optional dependency used heavily elsewhere
-    import duckdb  # type: ignore
-except ModuleNotFoundError as exc:  # pragma: no cover
-    duckdb = None  # type: ignore
-    _DUCKDB_IMPORT_ERROR = exc
-else:
-    _DUCKDB_IMPORT_ERROR = None
-
-from .reader import _normalize_sources
-from .sorter import (
-    PieceSorter,
-    _build_parquet_relation,
-    _normalise_memory_limit,
-    _prepare_sources,
-    _quote_identifier,
-)
-
+from .reader import PieceReader, _normalize_sources
+from .sorter import PieceSorter
 
 __all__ = ["PieceGrouper"]
 
@@ -67,14 +52,6 @@ def _normalise_groupby(group_by: Union[str, Sequence[str]]) -> Tuple[str, ...]:
     return values
 
 
-def _ensure_duckdb() -> None:
-    if duckdb is None:  # pragma: no cover - exercised when dependency missing
-        raise ModuleNotFoundError(
-            "PieceGrouper requires the optional 'duckdb' dependency. "
-            "Install it via `pip install duckdb`."
-        ) from _DUCKDB_IMPORT_ERROR
-
-
 def _normalise_columns(
     requested: Optional[Sequence[str]],
     group_cols: Tuple[str, ...],
@@ -99,10 +76,6 @@ def _normalise_chunk_size(value: Optional[int]) -> int:
     return value
 
 
-def _quote_columns(columns: Sequence[str]) -> str:
-    return ", ".join(_quote_identifier(column) for column in columns)
-
-
 def _make_temp_path(scratch: Optional[Path]) -> Path:
     if scratch is not None:
         scratch.mkdir(parents=True, exist_ok=True)
@@ -114,6 +87,272 @@ def _make_temp_path(scratch: Optional[Path]) -> Path:
     fd, temp_path = tempfile.mkstemp(prefix="parcake_sorted_", suffix=".parquet")
     os.close(fd)
     return Path(temp_path)
+
+
+def _split_dataframe(df: pd.DataFrame, chunk_size: int) -> List[pd.DataFrame]:
+    if df.empty:
+        return []
+    if len(df) <= chunk_size:
+        return [df.reset_index(drop=True)]
+    chunks: List[pd.DataFrame] = []
+    for start in range(0, len(df), chunk_size):
+        stop = min(start + chunk_size, len(df))
+        chunks.append(df.iloc[start:stop].reset_index(drop=True))
+    return chunks
+
+
+_STREAMABLE_AGGREGATIONS = {
+    "sum",
+    "min",
+    "max",
+    "count",
+    "len",
+    "mean",
+    "avg",
+    "first",
+    "last",
+    "nunique",
+}
+
+
+def _streamable_name(value: str) -> Optional[str]:
+    name = value.strip().lower()
+    if name == "avg":
+        return "mean"
+    if name in _STREAMABLE_AGGREGATIONS:
+        return name
+    return None
+
+
+@dataclass(frozen=True)
+class _AggregationTemplate:
+    column: str
+    alias: str
+    spec: Union[str, Callable[[pd.Series], Any]]
+    stream_name: Optional[str]
+
+
+@dataclass
+class _StreamingAgg:
+    name: str
+    value: Any = None
+    total: float = 0.0
+    count: int = 0
+    has_value: bool = False
+    uniques: Optional[set[Any]] = None
+
+    def update(self, series: pd.Series) -> None:
+        if series.empty:
+            return
+        if self.name == "sum":
+            current = series.sum(skipna=True)
+            if self.has_value:
+                self.value += current
+            else:
+                self.value = current
+                self.has_value = True
+            return
+        if self.name == "min":
+            nonnull = series.dropna()
+            if nonnull.empty:
+                return
+            candidate = nonnull.min()
+            if not self.has_value or candidate < self.value:
+                self.value = candidate
+                self.has_value = True
+            return
+        if self.name == "max":
+            nonnull = series.dropna()
+            if nonnull.empty:
+                return
+            candidate = nonnull.max()
+            if not self.has_value or candidate > self.value:
+                self.value = candidate
+                self.has_value = True
+            return
+        if self.name == "count":
+            self.count += series.count()
+            return
+        if self.name == "len":
+            self.count += len(series)
+            return
+        if self.name == "mean":
+            self.total += series.sum(skipna=True)
+            self.count += series.count()
+            return
+        if self.name == "first":
+            if self.has_value:
+                return
+            nonnull = series.dropna()
+            if not nonnull.empty:
+                self.value = nonnull.iloc[0]
+                self.has_value = True
+                return
+            self.value = series.iloc[0]
+            self.has_value = True
+            return
+        if self.name == "last":
+            nonnull = series.dropna()
+            if not nonnull.empty:
+                self.value = nonnull.iloc[-1]
+            else:
+                self.value = series.iloc[-1]
+            self.has_value = True
+            return
+        if self.name == "nunique":
+            if self.uniques is None:
+                self.uniques = set()
+            self.uniques.update(series.dropna().tolist())
+            return
+
+    def finalize(self) -> Any:
+        if self.name == "sum":
+            if not self.has_value:
+                return 0
+            return self.value
+        if self.name in {"min", "max", "first", "last"}:
+            if not self.has_value:
+                return pd.NA
+            return self.value
+        if self.name == "count":
+            return self.count
+        if self.name == "len":
+            return self.count
+        if self.name == "mean":
+            if self.count == 0:
+                return float("nan")
+            return self.total / self.count
+        if self.name == "nunique":
+            return len(self.uniques) if self.uniques is not None else 0
+        return pd.NA
+
+
+@dataclass
+class _AggregationState:
+    template: _AggregationTemplate
+    streaming: Optional[_StreamingAgg] = None
+    buffers: Optional[List[pd.Series]] = None
+
+    def __post_init__(self) -> None:
+        if self.template.stream_name is not None:
+            self.streaming = _StreamingAgg(self.template.stream_name)
+            self.buffers = None
+        else:
+            self.buffers = []
+            self.streaming = None
+
+    def update(self, series: pd.Series) -> None:
+        if self.streaming is not None:
+            self.streaming.update(series)
+            return
+        assert self.buffers is not None
+        self.buffers.append(series.copy(deep=False))
+
+    def finalize(self) -> Any:
+        if self.streaming is not None:
+            return self.streaming.finalize()
+        assert self.buffers is not None
+        if not self.buffers:
+            empty = pd.Series([], dtype="float64")
+            if callable(self.template.spec):
+                return self.template.spec(empty)
+            return empty.agg(self.template.spec)
+        combined = pd.concat(self.buffers, ignore_index=True)
+        if callable(self.template.spec):
+            return self.template.spec(combined)
+        return combined.agg(self.template.spec)
+
+
+def _parse_aggregations(
+    aggregations: Mapping[
+        str,
+        Union[
+            str,
+            Sequence[Union[str, Callable[[pd.Series], Any]]],
+            Mapping[str, Union[str, Callable[[pd.Series], Any]]],
+            Callable[[pd.Series], Any],
+        ],
+    ]
+) -> List[_AggregationTemplate]:
+    templates: List[_AggregationTemplate] = []
+    for column, spec in aggregations.items():
+        templates.extend(_expand_aggregation_spec(column, spec))
+    return templates
+
+
+def _expand_aggregation_spec(
+    column: str,
+    spec: Union[
+        str,
+        Sequence[Union[str, Callable[[pd.Series], Any]]],
+        Mapping[str, Union[str, Callable[[pd.Series], Any]]],
+        Callable[[pd.Series], Any],
+    ],
+) -> List[_AggregationTemplate]:
+    if callable(spec):
+        return [
+            _AggregationTemplate(
+                column=column,
+                alias=f"{column}_custom",
+                spec=spec,
+                stream_name=None,
+            )
+        ]
+    if isinstance(spec, Mapping):
+        mappings: List[_AggregationTemplate] = []
+        for alias, value in spec.items():
+            if callable(value):
+                mappings.append(
+                    _AggregationTemplate(
+                        column=column,
+                        alias=alias,
+                        spec=value,
+                        stream_name=None,
+                    )
+                )
+                continue
+            value_str = str(value)
+            mappings.append(
+                _AggregationTemplate(
+                    column=column,
+                    alias=alias,
+                    spec=value_str,
+                    stream_name=_streamable_name(value_str),
+                )
+            )
+        return mappings
+    if isinstance(spec, Sequence) and not isinstance(spec, (str, bytes)):
+        templates: List[_AggregationTemplate] = []
+        for index, value in enumerate(spec):
+            if callable(value):
+                templates.append(
+                    _AggregationTemplate(
+                        column=column,
+                        alias=f"{column}_custom_{index}",
+                        spec=value,
+                        stream_name=None,
+                    )
+                )
+                continue
+            value_str = str(value)
+            templates.append(
+                _AggregationTemplate(
+                    column=column,
+                    alias=f"{column}_{value_str}",
+                    spec=value_str,
+                    stream_name=_streamable_name(value_str),
+                )
+            )
+        return templates
+    value_str = str(spec)
+    return [
+        _AggregationTemplate(
+            column=column,
+            alias=f"{column}_{value_str}",
+            spec=value_str,
+            stream_name=_streamable_name(value_str),
+        )
+    ]
 
 
 class _GroupChunkIterator:
@@ -169,42 +408,27 @@ class PieceGrouper:
         to_pandas_kwargs: Optional[Mapping[str, Any]] = None,
         threads: Optional[int] = None,
     ) -> None:
-        _ensure_duckdb()
-
-        self._sources = _normalize_sources(source)
+        self._sources = tuple(_normalize_sources(source))
         self._group_columns = _normalise_groupby(group_by)
         self._project_columns = _normalise_columns(columns, self._group_columns)
         self._select_all = not bool(self._project_columns)
-        self._sort_requested = bool(sort)
         self._chunk_size = _normalise_chunk_size(max_chunk_size)
         self._keep_sorted = bool(keep_sorted)
         self._to_pandas_kwargs = dict(to_pandas_kwargs or {})
         self._scratch_dir = Path(scratch_directory).resolve() if scratch_directory else None
+        self._max_memory = max_memory
 
         if threads is not None and threads <= 0:
             raise ValueError("threads must be a positive integer when provided.")
+        self._threads = threads
 
         if self._scratch_dir is not None:
             self._scratch_dir.mkdir(parents=True, exist_ok=True)
 
-        self._patterns, _ = _prepare_sources(self._sources)
-        self._relation_sql = _build_parquet_relation(self._patterns)
-
-        self._conn = duckdb.connect(database=":memory:", read_only=False)
-        if threads is not None:
-            self._conn.execute(f"PRAGMA threads={int(threads)}")
-
-        if self._scratch_dir is not None:
-            self._conn.execute(f"SET temp_directory='{self._scratch_dir.as_posix()}'")
-
-        if max_memory is not None:
-            memory_limit = _normalise_memory_limit(max_memory)
-            if memory_limit is not None:
-                self._conn.execute(f"PRAGMA memory_limit='{memory_limit}'")
-
         self._sorted_path: Optional[Path] = None
         self._cleanup_paths: List[Path] = []
-        if self._sort_requested and self._keep_sorted:
+
+        if sort:
             temp_path = _make_temp_path(self._scratch_dir)
             sorter = PieceSorter(
                 source=self._sources,
@@ -213,67 +437,50 @@ class PieceGrouper:
             sorter.sort(
                 temp_path,
                 temp_directory=self._scratch_dir,
-                memory_limit=max_memory,
+                memory_limit=self._max_memory,
                 progress_bar=False,
             )
             self._sorted_path = temp_path
-            self._cleanup_paths.append(temp_path)
-            self._relation_sql = _build_parquet_relation((str(temp_path),))
-            self._sort_requested = False
+            self._active_sources: Tuple[Path, ...] = (temp_path,)
+            if not self._keep_sorted:
+                self._cleanup_paths.append(temp_path)
+        else:
+            self._active_sources = self._sources
 
-        self._active_cursor = None
-        self._active_reader: Optional[pa.RecordBatchReader] = None
+        self._reader: Optional[PieceReader] = None
+        self._reader_iter: Optional[Iterator[pd.DataFrame]] = None
+        self._pending_chunks: List[pd.DataFrame] = []
         self._next_group_buffer: Optional[pd.DataFrame] = None
 
     def _reset_stream(self) -> None:
-        if self._active_cursor is not None:
-            self._active_cursor = None
-        self._active_reader = None
-        select_clause = "*"
-        if not self._select_all:
-            select_clause = _quote_columns(self._project_columns)
-        sql = f"SELECT {select_clause} FROM {self._relation_sql}"
-        if self._sort_requested:
-            order_clause = ", ".join(_quote_identifier(col) for col in self._group_columns)
-            sql = f"{sql} ORDER BY {order_clause}"
-        self._active_cursor = self._conn.execute(sql)
+        columns: Optional[Sequence[str]] = None if self._select_all else self._project_columns
+        self._reader = PieceReader(
+            self._active_sources,
+            columns=columns,
+            to_pandas_kwargs=self._to_pandas_kwargs,
+        )
+        self._reader_iter = iter(self._reader)
+        self._pending_chunks = []
         self._next_group_buffer = None
 
     def _fetch_next_chunk(self) -> Optional[pd.DataFrame]:
-        assert self._active_cursor is not None
+        iterator = self._reader_iter
+        if iterator is None:
+            return None
         while True:
-            if self._active_reader is not None:
-                try:
-                    batch = self._active_reader.read_next_batch()
-                except StopIteration:
-                    self._active_reader = None
-                    continue
-                if batch is None or batch.num_rows == 0:
-                    self._active_reader = None
-                    continue
-            else:
-                try:
-                    candidate = self._active_cursor.fetch_record_batch(self._chunk_size)
-                except duckdb.InvalidInputException:
-                    return None
-                if candidate is None:
-                    return None
-                if isinstance(candidate, pa.RecordBatch):
-                    batch = candidate
-                else:
-                    self._active_reader = candidate
-                    try:
-                        batch = self._active_reader.read_next_batch()
-                    except StopIteration:
-                        self._active_reader = None
-                        continue
-                    if batch is None or batch.num_rows == 0:
-                        self._active_reader = None
-                        continue
-
-            df = batch.to_pandas(**self._to_pandas_kwargs)
-            if not df.empty:
-                return df
+            if self._pending_chunks:
+                return self._pending_chunks.pop(0)
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                return None
+            if batch is None or batch.empty:
+                continue
+            batch = batch.reset_index(drop=True)
+            if len(batch) > self._chunk_size:
+                self._pending_chunks.extend(_split_dataframe(batch, self._chunk_size))
+                continue
+            return batch
 
     def _fetch_for_group(self, key: Tuple[Any, ...]) -> Optional[pd.DataFrame]:
         if self._next_group_buffer is not None:
@@ -312,7 +519,7 @@ class PieceGrouper:
 
     def __iter__(self) -> Iterator[Tuple[GroupKey, Iterator[pd.DataFrame]]]:
         self._reset_stream()
-        assert self._active_cursor is not None
+        assert self._reader_iter is not None
 
         while True:
             if self._next_group_buffer is not None:
@@ -341,90 +548,51 @@ class PieceGrouper:
             yield key, df
 
     def unique(self) -> List[GroupKey]:
-        select_clause = ", ".join(_quote_identifier(col) for col in self._group_columns)
-        sql = f"SELECT DISTINCT {select_clause} FROM {self._relation_sql}"
-        if self._sort_requested or self._keep_sorted:
-            order_clause = ", ".join(_quote_identifier(col) for col in self._group_columns)
-            sql = f"{sql} ORDER BY {order_clause}"
-        cursor = self._conn.execute(sql)
-        table = cursor.fetch_arrow_table()
-        if table is None:
-            return []
         results: List[GroupKey] = []
-        for batch in table.to_batches():
-            df = batch.to_pandas()
-            for _, row in df.iterrows():
-                values = tuple(row[column] for column in self._group_columns)
-                results.append(_value_or_tuple(values))
+        for key, chunk_iter in self:
+            results.append(key)
+            for _ in chunk_iter:
+                pass
         return results
 
     def aggregate(
         self,
-        aggregations: Mapping[str, Union[str, Sequence[str], Mapping[str, Union[str, Callable[[pd.Series], Any]]]]],
+        aggregations: Mapping[
+            str,
+            Union[
+                str,
+                Sequence[Union[str, Callable[[pd.Series], Any]]],
+                Mapping[str, Union[str, Callable[[pd.Series], Any]]],
+                Callable[[pd.Series], Any],
+            ],
+        ],
     ) -> pd.DataFrame:
-        duckdb_exprs: List[str] = []
-        python_specs: List[Tuple[str, str, Callable[[pd.Series], Any]]] = []
-
-        for column, spec in aggregations.items():
-            if callable(spec):
-                alias = f"{column}_custom"
-                python_specs.append((column, alias, spec))
-                continue
-            if isinstance(spec, Mapping):
-                for alias, value in spec.items():
-                    if callable(value):
-                        python_specs.append((column, alias, value))
-                        continue
-                    expr = f"{str(value).upper()}({_quote_identifier(column)}) AS {_quote_identifier(alias)}"
-                    duckdb_exprs.append(expr)
-                continue
-            if isinstance(spec, Sequence) and not isinstance(spec, str):
-                for value in spec:
-                    expr = f"{str(value).upper()}({_quote_identifier(column)}) AS {_quote_identifier(f'{column}_{value}')}"
-                    duckdb_exprs.append(expr)
-                continue
-            expr = f"{str(spec).upper()}({_quote_identifier(column)}) AS {_quote_identifier(f'{column}_{spec}')}"
-            duckdb_exprs.append(expr)
-
-        frames: List[pd.DataFrame] = []
-        if duckdb_exprs:
-            group_cols = [_quote_identifier(col) for col in self._group_columns]
-            select_parts = list(group_cols) + duckdb_exprs
-            select_clause = ", ".join(select_parts)
-            group_clause = ", ".join(group_cols)
-            sql = f"SELECT {select_clause} FROM {self._relation_sql} GROUP BY {group_clause}"
-            if self._sort_requested or self._keep_sorted:
-                sql = f"{sql} ORDER BY {group_clause}"
-            cursor = self._conn.execute(sql)
-            table = cursor.fetch_arrow_table()
-            if table is not None:
-                frames.append(table.to_pandas())
-
-        if python_specs:
-            records: List[Dict[str, Any]] = []
-            for key, df in self.all():
-                record: Dict[str, Any] = {}
-                if isinstance(key, tuple):
-                    for column, value in zip(self._group_columns, key):
-                        record[column] = value
-                else:
-                    record[self._group_columns[0]] = key
-                for column, alias, func in python_specs:
-                    record[alias] = func(df[column])
-                records.append(record)
-            if records:
-                frames.append(pd.DataFrame(records))
-
-        if not frames:
+        templates = _parse_aggregations(aggregations)
+        if not templates:
             return pd.DataFrame(columns=list(self._group_columns))
 
-        if len(frames) == 1:
-            return frames[0]
+        records: List[Dict[str, Any]] = []
+        for key, chunk_iter in self:
+            record: Dict[str, Any] = {}
+            if isinstance(key, tuple):
+                for column, value in zip(self._group_columns, key):
+                    record[column] = value
+            else:
+                record[self._group_columns[0]] = key
 
-        merged = frames[0]
-        for frame in frames[1:]:
-            merged = pd.merge(merged, frame, on=list(self._group_columns), how="outer")
-        return merged
+            states = [_AggregationState(template) for template in templates]
+            for chunk in chunk_iter:
+                for state in states:
+                    series = chunk[state.template.column]
+                    state.update(series)
+            for state in states:
+                record[state.template.alias] = state.finalize()
+            records.append(record)
+
+        if not records:
+            return pd.DataFrame(columns=list(self._group_columns))
+
+        return pd.DataFrame.from_records(records)
 
     def map(
         self,
@@ -461,11 +629,10 @@ class PieceGrouper:
         return self._sorted_path
 
     def close(self) -> None:
-        self._active_cursor = None
-        self._active_reader = None
-        if hasattr(self, "_conn") and self._conn is not None:
-            self._conn.close()
-            self._conn = None  # type: ignore
+        self._reader_iter = None
+        self._reader = None
+        self._pending_chunks = []
+        self._next_group_buffer = None
         if not self._keep_sorted:
             for path in self._cleanup_paths:
                 with contextlib.suppress(Exception):
@@ -481,4 +648,3 @@ class PieceGrouper:
     def __del__(self) -> None:  # pragma: no cover - defensive cleanup
         with contextlib.suppress(Exception):
             self.close()
-
