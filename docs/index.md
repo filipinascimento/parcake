@@ -14,6 +14,7 @@ pyarrow plumbing.
 - Efficient row-group iteration that yields pandas DataFrames with `PieceReader`
 - Parallel row-group processing using high level helpers
 - DuckDB-powered sorting for large datasets with `PieceSorter`
+- Streaming group-by iteration and aggregations via `PieceGrouper`
 
 ## Installation
 

@@ -19,3 +19,9 @@ Real-world snippets that demonstrate Parcake's helpers.
 ```python
 --8<-- "examples/sort_example.py"
 ```
+
+## Grouped Processing
+
+```python
+--8<-- "examples/group_example.py"
+```

@@ -5,11 +5,13 @@ from importlib.metadata import PackageNotFoundError, version as pkg_version
 from .saver import PieceSaver
 from .reader import PieceReader
 from .sorter import PieceSorter
+from .grouper import PieceGrouper
 
 __all__ = [
     "PieceSaver",
     "PieceReader",
     "PieceSorter",
+    "PieceGrouper",
     "__version__",
 ]
 

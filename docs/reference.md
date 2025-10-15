@@ -8,3 +8,6 @@ The classes below are documented directly from the source using
 ::: parcake.PieceReader
 
 ::: parcake.PieceSorter
+
+::: parcake.PieceGrouper
+
