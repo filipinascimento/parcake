@@ -22,6 +22,9 @@ Real-world snippets that demonstrate Parcake's helpers.
 
 ## Grouped Processing
 
+Use `PieceGrouper` to stream contiguous groups, compute aggregations, or persist
+sorted scratch files without loading the entire dataset at once.
+
 ```python
 --8<-- "examples/group_example.py"
 ```

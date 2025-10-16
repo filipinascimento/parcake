@@ -132,4 +132,5 @@ Temporary Items
 *.pkl
 **/Samples
 /.duckdb-temp
+/.parcake_scratch
 

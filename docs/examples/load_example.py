@@ -21,6 +21,7 @@ if __name__ == "__main__":
     for df in tqdm(reader):
         pass
 
+
     # Option 1b - Simple iteration with multiple files
     reader = PieceReader(paths)
     for df in tqdm(reader):
@@ -35,17 +36,24 @@ if __name__ == "__main__":
             # do work...
             pass
 
+
     # Option 2a — Parallel processing with preserved order
-    def get_lengths(df):
-        # Compute the length of the DataFrame
+    def get_lengths_and_duration_sum(df):
+        # Compute the length of the DataFrame and sum of the 'duration' column
         # do work...
-        return len(df)
+        return len(df), df['duration'].sum()
 
     all_lengths = []
-    for res in tqdm(reader.process(get_lengths, ncpu=-1, keep_order=True),total=reader.task_count()):
-        all_lengths.append(res)
+    all_duration_sum = 0.0
+    for length, duration_sum in tqdm(reader.process(get_lengths_and_duration_sum, ncpu=-1, keep_order=True),total=reader.task_count()):
+        all_lengths.append(length)
+        all_duration_sum += duration_sum
 
-    print("Total entries: ", sum(all_lengths))
+    total_entries = sum(all_lengths)
+    avg_duration = all_duration_sum / total_entries if total_entries > 0 else 0
+    print("Total event entries: ", total_entries)
+    print("Avg event duration: ", avg_duration)
+
 
     # Option 2b — Parallel processing with unordered results
     from multiprocessing import Pool 
@@ -57,4 +65,8 @@ if __name__ == "__main__":
     with Pool(32) as pool:
         for res in tqdm(reader.process(get_first_id, pool=pool, keep_order=False, unordered=True, chunksize=4),total=reader.task_count()):
             all_first_ids.append(res)
+
+    # Print first 10 event IDs
+    # Note: these may be in any order due to unordered processing
+    print("First 10 event IDs: ", all_first_ids[:10]) 
 

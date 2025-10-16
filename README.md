@@ -20,6 +20,7 @@ writing of Parquet files with a focus on **efficiency** and **ease of use**:
 - ⚙️ **Parallel row-group processing** with `PieceReader.process`
 - 💾 **Memory-aware operations** that avoid loading entire datasets at once
 - 🔽 **DuckDB-powered sorting** for large datasets with `PieceSorter`
+- 🧮 **Streaming group-by aggregation** for massive datasets via `PieceGrouper`
 
 These utilities make it easier to work with large Parquet datasets—ideal for
 data pipelines, preprocessing, or scalable ETL jobs.
@@ -108,6 +109,23 @@ sorter.sort('./events_sorted.parquet', compression='preserve', threads=4)
 
 Provide per-column directions with tuples, for example `('timestamp', True)` for ascending or `('value', False)` for descending. Pass directories or glob patterns to combine many files.
 
+### PieceGrouper — stream grouped aggregations
+
+```python
+from parcake import PieceGrouper
+
+sources = ['events_a.parquet', 'events_b.parquet']
+with PieceGrouper(sources, group_by=['customer_id', 'region']) as grouper:
+    for key, batches in grouper:
+        for frame in batches:
+            print(key, frame.shape)
+
+    summary = grouper.aggregate({'revenue': ['sum', 'max'], 'order_id': 'count'})
+    unique_groups = grouper.unique()
+```
+
+`PieceGrouper` guarantees consistent grouping even when the input is unsorted, optionally materialises a sorted scratch file for reuse, and exposes helpers like `aggregate`, `unique`, and `sorted_path` to speed up analytics workloads without loading whole datasets into memory.
+
 ### Parallel processing with PieceReader.process
 
 ```python
@@ -133,9 +151,7 @@ to stream results as soon as they are ready.
 
 ## 🧪 Examples
 
-See the Sphinx-style docs in `docs/`—notably `docs/examples/save_example.py`, `docs/examples/load_example.py`, and `docs/examples/sort_example.py` for end-to-end
-examples that create Parquet files with `PieceSaver` and iterate through them
-with `PieceReader`, including progress reporting and parallel execution recipes.
+See the Sphinx-style docs in `docs/`—notably `docs/examples/save_example.py`, `docs/examples/load_example.py`, `docs/examples/sort_example.py`, and `docs/examples/group_example.py` for end-to-end examples that create Parquet files with `PieceSaver`, stream them with `PieceReader`, perform large-file sorting with `PieceSorter`, and run memory-efficient group-by workflows via `PieceGrouper`.
 
 ---
 
@@ -145,6 +161,8 @@ with `PieceReader`, including progress reporting and parallel execution recipes.
 |--------------|-------------|
 | `PieceSaver` | Buffered writer that saves rows in fixed-size pieces with schema validation |
 | `PieceReader` | Iterator that yields Parquet row groups as pandas DataFrames |
+| `PieceSorter` | DuckDB-backed external sorting for multi-file Parquet datasets |
+| `PieceGrouper` | Streaming group-by iteration and aggregation over Parquet sources |
 | `PieceReader.process` | Apply a callable to each row group sequentially or in parallel |
 
 ---

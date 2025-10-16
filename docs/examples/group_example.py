@@ -4,19 +4,30 @@ from pathlib import Path
 
 from parcake import PieceGrouper
 
+from tqdm.auto import tqdm
 
 if __name__ == "__main__":
     sources = ["events_0.parquet", "events_1.parquet"]
+    # The schema of the data being read:
+    # "event_id": "int",
+    # "user_id": "str",
+    # "type": "str",
+    # "name": "str",
+    # "created": "datetime64[ns]",
+    # "duration": "float",
 
     with PieceGrouper(
         sources,
-        group_by=["country", "device_type"],
+        group_by=["user_id", "type"],
         max_chunk_size=250_000,
         keep_sorted=True,
         scratch_directory=Path(".parcake_scratch"),
+        threads=32,
+        verbose=True,
     ) as grouper:
         # Stream over each group without loading the entire dataset into memory.
-        for group_key, chunk_iter in grouper:
+        print("Processing groups:")
+        for group_key, chunk_iter in tqdm(grouper):
             for batch in chunk_iter:
                 # batch is a pandas.DataFrame containing the subset for this group.
                 # Replace the line below with domain specific processing.
@@ -29,9 +40,8 @@ if __name__ == "__main__":
         # Produce aggregate metrics similar to pandas.GroupBy.agg.
         summary = grouper.aggregate(
             {
-                "revenue": ["sum", "max"],
+                "duration": ["sum", "max"],
                 "event_id": {"event_count": "count"},
-                "session_duration": {"avg_session_duration": "avg"},
             }
         )
         print(summary.head())
