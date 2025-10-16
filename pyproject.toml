@@ -9,7 +9,7 @@ build-backend = "mesonpy"
 
 [project]
 name = "parcake"
-version = "0.3.1"
+version = "0.4.0"
 description = "Makes Parquet workflows a piece of cake to slice, save, and serve."
 readme = "README.md"
 requires-python = ">=3.9"
