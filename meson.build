@@ -6,11 +6,16 @@ project(
 )
 
 python_mod = import('python')
-fs = import('fs')
 py = python_mod.find_installation(pure: true)
 
-# Collect every module in the parcel to avoid missing new utilities (like PieceGrouper).
-package_sources = fs.glob('src/parcake/*.py')
-package_sources += files('src/parcake/py.typed')
+# Explicit list keeps Meson compatible while ensuring all public modules ship.
+package_sources = files(
+  'src/parcake/__init__.py',
+  'src/parcake/grouper.py',
+  'src/parcake/reader.py',
+  'src/parcake/saver.py',
+  'src/parcake/sorter.py',
+  'src/parcake/py.typed',
+)
 
 py.install_sources(package_sources, pure: true, subdir: 'parcake')
