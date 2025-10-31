@@ -22,6 +22,15 @@ _PYARROW_TYPE_ALIASES: MutableMapping[str, pa.DataType] = {
     "float64": pa.float64(),
     "bool": pa.bool_(),
     "boolean": pa.bool_(),
+    "categorical": pa.dictionary(pa.int64(), pa.string()),
+    "str[]": pa.list_(pa.string()),
+    "int[]": pa.list_(pa.int64()),
+    "float[]": pa.list_(pa.float64()),
+    "bool[]": pa.list_(pa.bool_()),
+    "dict": pa.map_(pa.string(), pa.string()),
+    "dict[]": pa.list_(pa.map_(pa.string(), pa.string())),
+    "nested": pa.struct([("key", pa.string()), ("value", pa.string())]),
+    "nested[]": pa.list_(pa.struct([("key", pa.string()), ("value", pa.string())])),
 }
 
 _PANDAS_TYPE_ALIASES: MutableMapping[str, str] = {
@@ -34,6 +43,15 @@ _PANDAS_TYPE_ALIASES: MutableMapping[str, str] = {
     "float64": "float64",
     "bool": "boolean",
     "boolean": "boolean",
+    "categorical": "category",
+    "str[]": "object",
+    "int[]": "object",
+    "float[]": "object",
+    "bool[]": "object",
+    "dict": "object",
+    "dict[]": "object",
+    "nested": "object",
+    "nested[]": "object",
 }
 
 

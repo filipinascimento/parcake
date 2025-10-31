@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from parcake.saver import PieceSaver
+from parcake.saver import _normalise_type  # type: ignore
 
 
 def test_piece_saver_writes_pieces(tmp_path: Path) -> None:
@@ -113,6 +114,34 @@ def test_piece_saver_forwards_compression_level(monkeypatch, tmp_path: Path) -> 
     assert captured["kwargs"].get("compression_level") == 5
     assert captured.get("rows") == 1
     assert captured.get("closed") is True
+
+
+@pytest.mark.parametrize(
+    ("alias", "expected_arrow", "expected_pandas"),
+    [
+        ("categorical", pa.dictionary(pa.int64(), pa.string()), "category"),
+        ("str[]", pa.list_(pa.string()), "object"),
+        ("int[]", pa.list_(pa.int64()), "object"),
+        ("float[]", pa.list_(pa.float64()), "object"),
+        ("bool[]", pa.list_(pa.bool_()), "object"),
+        ("dict", pa.map_(pa.string(), pa.string()), "object"),
+        ("dict[]", pa.list_(pa.map_(pa.string(), pa.string())), "object"),
+        (
+            "nested",
+            pa.struct([("key", pa.string()), ("value", pa.string())]),
+            "object",
+        ),
+        (
+            "nested[]",
+            pa.list_(pa.struct([("key", pa.string()), ("value", pa.string())])),
+            "object",
+        ),
+    ],
+)
+def test_normalise_type_supports_complex_aliases(alias, expected_arrow, expected_pandas):
+    arrow_type, pandas_dtype = _normalise_type(alias)
+    assert arrow_type == expected_arrow
+    assert pandas_dtype == expected_pandas
 
 
 
