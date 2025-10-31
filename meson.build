@@ -1,6 +1,6 @@
 project(
   'parcake',
-  version: '0.4.1',
+  version: '0.4.2',
   license: 'MIT',
   meson_version: '>=1.2'
 )
