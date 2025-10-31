@@ -489,7 +489,49 @@ def _truncate(message: str, limit: int = 60) -> str:
 
 
 class PieceGrouper:
-    """Iterate over Parquet data grouped by one or more columns."""
+    """Iterate over Parquet data grouped by one or more columns.
+
+    Parameters
+    ----------
+    source:
+        Single Parquet path/glob or an iterable of paths to process.
+    group_by:
+        Column name or ordered collection of column names that define a group.
+    columns:
+        Optional projection of columns to materialise in each chunk. Grouping
+        columns are always included even when omitted here.
+    sort:
+        When ``True`` (default) the input is externally sorted by the grouping
+        columns to guarantee contiguous groups across pieces.
+    scratch_directory:
+        Directory used to store temporary artefacts (sorted Parquet files). If
+        omitted, the system temporary directory is used.
+    max_memory:
+        Optional DuckDB memory limit passed through to :class:`PieceSorter`.
+    max_chunk_size:
+        Upper bound for the number of rows yielded per batch when streaming
+        within a group. Defaults to ``500_000``.
+    keep_sorted:
+        Persist the sorted scratch file on disk instead of cleaning it up when
+        the grouper is closed.
+    preload_groups:
+        If ``True`` (default) an index of unique group keys is eagerly built so
+        ``len(grouper)`` and :meth:`unique` can be evaluated cheaply.
+    verbose:
+        Emit progress messages and, when available, a tqdm progress bar.
+    to_pandas_kwargs:
+        Keyword arguments forwarded to :meth:`pyarrow.Table.to_pandas` for each
+        row-group read by :class:`PieceReader`.
+    threads:
+        Optional thread count for background tasks such as unique-key discovery.
+
+    Notes
+    -----
+    - Use the context manager protocol to ensure temporary scratch files are
+      cleaned up even when an exception is raised.
+    - Group chunks are streamed, making it safe to process datasets larger than
+      memory as long as each individual chunk fits.
+    """
 
     def __init__(
         self,
@@ -662,6 +704,14 @@ class PieceGrouper:
     # ------------------------------------------------------------------
 
     def __iter__(self) -> Iterator[Tuple[GroupKey, Iterator[pd.DataFrame]]]:
+        """Yield ``(group_key, chunk_iterator)`` pairs (streaming by group).
+
+        Returns
+        -------
+        Iterator[Tuple[Any, Iterator[pandas.DataFrame]]]
+            The group key (scalar or tuple) and an iterator over contiguous
+            DataFrame chunks belonging to that group.
+        """
         self._progress.info("Starting group iteration")
         yielded = False
 
@@ -675,6 +725,7 @@ class PieceGrouper:
             self._progress.step("Iteration complete")
 
     def all(self) -> Iterator[Tuple[GroupKey, pd.DataFrame]]:
+        """Iterate over fully materialised DataFrames for each group."""
         for key, chunk_iter in self:
             pieces = list(chunk_iter)
             if len(pieces) == 1:
@@ -683,6 +734,7 @@ class PieceGrouper:
             yield key, pd.concat(pieces, ignore_index=True)
 
     def unique(self, threads: Optional[int] = None) -> List[GroupKey]:
+        """Return every unique group key discovered in source order."""
         self._ensure_unique_cache(threads)
         if self._unique_keys_cache is None:
             return []
@@ -690,6 +742,7 @@ class PieceGrouper:
         return list(self._unique_keys_cache)
 
     def __len__(self) -> int:
+        """Number of distinct group keys (requires ``preload_groups=True``)."""
         self._ensure_unique_cache()
         if self._unique_keys_cache is None:
             raise TypeError("Length is unavailable when unique keys cannot be determined.")
@@ -707,6 +760,23 @@ class PieceGrouper:
             ],
         ],
     ) -> pd.DataFrame:
+        """Compute streaming aggregations similarly to :meth:`pandas.DataFrame.agg`.
+
+        Parameters
+        ----------
+        aggregations:
+            Mapping of column names to aggregation specifications, matching the
+            pandas ``DataFrame.agg`` API. Built-in streaming functions include
+            ``sum``, ``min``, ``max``, ``count``, ``len``, ``mean``/``avg``,
+            ``first``, ``last``, and ``nunique``. Arbitrary callables are also
+            supported but require the entire group's data to be materialised.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A table containing one row per group with the grouping columns and
+            aggregation outputs.
+        """
         templates = _parse_aggregations(aggregations)
         if not templates:
             return pd.DataFrame(columns=list(self._group_columns))
@@ -738,25 +808,30 @@ class PieceGrouper:
         self,
         func: Callable[[GroupKey, Iterator[pd.DataFrame]], Any],
     ) -> List[Any]:
+        """Apply ``func`` to each streaming group iterator."""
         return [func(key, chunk_iter) for key, chunk_iter in self]
 
     def apply(
         self,
         func: Callable[[GroupKey, pd.DataFrame], Any],
     ) -> List[Any]:
+        """Apply ``func`` to fully materialised groups (like pandas ``GroupBy.apply``)."""
         return [func(key, df) for key, df in self.all()]
 
     def filter(
         self,
         predicate: Callable[[GroupKey, pd.DataFrame], bool],
     ) -> List[Tuple[GroupKey, pd.DataFrame]]:
+        """Filter groups by a predicate evaluated on the full group DataFrame."""
         return [(key, df) for key, df in self.all() if predicate(key, df)]
 
     @property
     def sorted_path(self) -> Optional[Path]:
+        """Path to the sorted scratch Parquet file when ``keep_sorted`` or ``sort`` is used."""
         return self._sorted_path
 
     def close(self) -> None:
+        """Release resources, removing scratch files unless ``keep_sorted`` is set."""
         self._progress.info("Closing PieceGrouper")
         if not self._keep_sorted:
             for path in self._cleanup_paths:
