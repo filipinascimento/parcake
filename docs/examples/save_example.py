@@ -82,3 +82,32 @@ print(df)
 table = pq.read_table(output_path1)
 df = table.to_pandas()
 print(df)
+
+
+# save from chunked DataFrames directly
+# useful when your upstream pipeline already yields DataFrame chunks
+output_path2 = "events_2.parquet"
+chunk_size = 25_000
+
+with PieceSaver(schema, output_path2, max_piece_size=10000) as saver:
+    for start in tqdm(range(0, N, chunk_size)):
+        stop = min(start + chunk_size, N)
+        size = stop - start
+        chunk_types = [random.choice(list(eventType_to_avg_durations.keys())) for _ in range(size)]
+        chunk = pd.DataFrame(
+            {
+                "event_id": range(start, stop),
+                "user_id": [f"user_{random.randint(0, N//20)}" for _ in range(size)],
+                "type": chunk_types,
+                "name": [f"event_{random.randint(0, 100)}" for _ in range(size)],
+                "created": [pd.Timestamp("2023-01-01") + pd.Timedelta(seconds=index) for index in range(start, stop)],
+                "duration": [
+                    random.uniform(0, 2 * eventType_to_avg_durations[event_type]) for event_type in chunk_types
+                ],
+            }
+        )
+        saver.write_dataframe(chunk)
+
+table = pq.read_table(output_path2)
+df = table.to_pandas()
+print(df)

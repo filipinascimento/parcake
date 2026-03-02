@@ -10,7 +10,7 @@ pyarrow plumbing.
 
 ## Key Capabilities
 
-- Chunked writing with schema enforcement via `PieceSaver`
+- Chunked writing with schema enforcement via `PieceSaver` (row-wise or direct DataFrame chunks)
 - Efficient row-group iteration that yields pandas DataFrames with `PieceReader`
 - Parallel row-group processing using high level helpers
 - DuckDB-powered sorting for large datasets with `PieceSorter`

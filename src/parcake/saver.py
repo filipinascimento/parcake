@@ -175,8 +175,54 @@ class PieceSaver:
             per row.
         """
 
+        if isinstance(rows, pd.DataFrame):
+            self.write_dataframe(rows)
+            return
+
         for row in rows:
             self.add(**row)
+
+    def write_dataframe(self, dataframe: pd.DataFrame, *, chunk_size: Optional[int] = None) -> None:
+        """Write a pandas DataFrame directly to the Parquet output.
+
+        This bypasses row-by-row buffering and is intended for chunked DataFrame
+        workflows where each chunk can be written as a table.
+
+        :param dataframe: Input DataFrame to persist.
+        :param chunk_size: Optional maximum rows per write call. Defaults to
+            ``max_piece_size``.
+        :raises ValueError: If *chunk_size* is not a positive integer.
+        """
+
+        if dataframe.empty:
+            return
+
+        if chunk_size is None:
+            chunk_size = self._max_piece_size
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+
+        self.save_piece(force=True)
+
+        normalised = pd.DataFrame(index=dataframe.index)
+        for column in self._columns:
+            if column in dataframe.columns:
+                normalised[column] = dataframe[column]
+            else:
+                normalised[column] = pd.Series([None] * len(dataframe), index=dataframe.index)
+
+        if self._writer is None:
+            writer_kwargs: Dict[str, Any] = {}
+            if self._compression_level is not None:
+                writer_kwargs["compression_level"] = self._compression_level
+            self._writer = pq.ParquetWriter(self._output_path, self._schema, **writer_kwargs)
+
+        for start in range(0, len(normalised), chunk_size):
+            stop = start + chunk_size
+            chunk_df = normalised.iloc[start:stop]
+            table = pa.Table.from_pandas(chunk_df, schema=self._schema, preserve_index=False)
+            self._writer.write_table(table)
+            self._rows_written += len(chunk_df)
 
     def save_piece(self, *, force: bool = False) -> None:
         """Persist the in-memory buffer to disk when it contains rows.

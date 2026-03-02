@@ -85,6 +85,58 @@ def test_piece_saver_requires_positive_piece_size(tmp_path: Path) -> None:
         PieceSaver({"id": "int"}, tmp_path / "bad.parquet", max_piece_size=0)
 
 
+def test_piece_saver_write_dataframe(tmp_path: Path) -> None:
+    output_path = tmp_path / "df_write.parquet"
+    saver = PieceSaver({"id": "int64", "value": "float64"}, output_path, max_piece_size=2)
+
+    chunk = pd.DataFrame({"id": [1, 2, 3], "value": [1.0, 2.0, 3.0]})
+    saver.write_dataframe(chunk)
+    saver.close()
+
+    table = pq.read_table(output_path)
+    df = table.to_pandas()
+    assert df["id"].tolist() == [1, 2, 3]
+    assert df["value"].tolist() == [1.0, 2.0, 3.0]
+    assert saver.rows_written == 3
+
+
+def test_piece_saver_add_many_accepts_dataframe(tmp_path: Path) -> None:
+    output_path = tmp_path / "df_add_many.parquet"
+    saver = PieceSaver({"id": "int64", "value": "float64"}, output_path, max_piece_size=2)
+
+    chunk = pd.DataFrame({"id": [10, 11, 12], "value": [0.1, 0.2, 0.3]})
+    saver.add_many(chunk)
+    saver.close()
+
+    table = pq.read_table(output_path)
+    df = table.to_pandas()
+    assert df["id"].tolist() == [10, 11, 12]
+    assert saver.rows_written == 3
+
+
+def test_piece_saver_write_dataframe_flushes_buffer_first(tmp_path: Path) -> None:
+    output_path = tmp_path / "mixed_write.parquet"
+    saver = PieceSaver({"id": "int64", "value": "float64"}, output_path, max_piece_size=10)
+
+    saver.add(id=1, value=1.0)
+    saver.add(id=2, value=2.0)
+    saver.write_dataframe(pd.DataFrame({"id": [3, 4], "value": [3.0, 4.0]}))
+    saver.close()
+
+    table = pq.read_table(output_path)
+    df = table.to_pandas()
+    assert df["id"].tolist() == [1, 2, 3, 4]
+    assert saver.rows_written == 4
+
+
+def test_piece_saver_write_dataframe_invalid_chunk_size(tmp_path: Path) -> None:
+    output_path = tmp_path / "bad_chunk_size.parquet"
+    saver = PieceSaver({"id": "int64"}, output_path)
+
+    with pytest.raises(ValueError):
+        saver.write_dataframe(pd.DataFrame({"id": [1]}), chunk_size=0)
+
+
 
 def test_piece_saver_forwards_compression_level(monkeypatch, tmp_path: Path) -> None:
     captured = {}
